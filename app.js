@@ -1,5 +1,5 @@
 const DEFAULT_WATCHLIST = ["ADBL","CIT","GBIME","HIDCL","ICFC","KBL","MMF1","NBL","NLIC","PRVU","SBL","SFMF"];
-const DB_KEY = "nepse_research_desk_v1";
+const DB_KEY = "nepse_research_desk_v03_test"; // Isolated test storage; never reads or writes the v0.2 production key.
 const state = loadState();
 
 function loadState(){

@@ -101,3 +101,11 @@ Run the built-in technical engine tests with Node.js (no external packages requi
 node --check app.js
 node --test tests/technical-engine.test.cjs
 ```
+
+
+## v0.3 test-environment storage isolation (Phase 2.1)
+- This GitHub Pages test build stores data under `nepse_research_desk_v03_test`.
+- It does not read, overwrite, or remove the v0.2 production key `nepse_research_desk_v1`.
+- The service-worker cache namespace is `nepse-research-desk-v03-test-`; activation only removes older caches within that namespace. It does not delete the v0.2 app cache or other apps' caches on the shared `github.io` origin.
+- No automatic copy from v0.2 is performed. Import a JSON backup into the test app only after confirming this isolated build is deployed.
+- The test app and production app still share the browser's origin, so the key and cache namespace separation are essential. Do not use browser-wide site-data clearing during testing.
