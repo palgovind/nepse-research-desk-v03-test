@@ -121,19 +121,24 @@ function timeframeAnalysis(rows,period){
   const rs=rsiSeries(closes,14);
   // EMA must begin at the first valid RSI, not at artificial zero warm-up values.
   const first=rs.findIndex(v=>v!==null);
-  if(first<0)return {bars,rs,es:[],state:{cross:null,aboveSignal:null,above50:null,combined:null,rsi:null,signal:null},provisional:false,period};
-  const validRsi=rs.slice(first),validEma=emaSeries(validRsi,9),aligned=Array(first).fill(null).concat(validEma);
-  const st=signalState(rs,aligned);
   const today=isoToday();let provisional=false;
   if(bars.length){
     const last=bars.at(-1),dt=new Date(last.date+'T12:00:00Z');
     if(period==='weekly'){
+      // NEPSE's regular trading week ends Thursday; missing Thursday data is provisional.
       const dow=dt.getUTCDay();provisional=dow!==4||last.date>=today;
     }else if(period==='monthly'){
       const end=new Date(Date.UTC(dt.getUTCFullYear(),dt.getUTCMonth()+1,0));provisional=end.toISOString().slice(0,10)>today;
     }
   }
-  return {bars,rs,es:aligned,state:st,provisional,period};
+  if(first<0)return {bars,rs,es:Array(bars.length).fill(null),state:{cross:null,aboveSignal:null,above50:null,combined:null,rsi:null,signal:null},history:[],provisional,period};
+  const validRsi=rs.slice(first),validEma=emaSeries(validRsi,9),aligned=Array(first).fill(null).concat(validEma);
+  const st=signalState(rs,aligned),history=[];
+  for(let i=1;i<rs.length;i++)if(rs[i-1]!=null&&aligned[i-1]!=null&&rs[i]!=null&&aligned[i]!=null){
+    if(rs[i-1]<=aligned[i-1]&&rs[i]>aligned[i])history.push({date:bars[i].date,type:'Bullish cross'});
+    else if(rs[i-1]>=aligned[i-1]&&rs[i]<aligned[i])history.push({date:bars[i].date,type:'Bearish cross'});
+  }
+  return {bars,rs,es:aligned,state:st,history,provisional,period};
 }
 function macd(values){const e12=ema(values,12),e26=ema(values,26);return e12===null||e26===null?null:e12-e26;}
 function renderResearch(){
@@ -167,10 +172,15 @@ function renderResearch(){
   const history=[];for(let i=1;i<rsiValues.length;i++)if(rsiValues[i-1]!=null&&rsiEma[i-1]!=null&&rsiValues[i]!=null&&rsiEma[i]!=null){if(rsiValues[i-1]<=rsiEma[i-1]&&rsiValues[i]>rsiEma[i])history.push({date:rows[i].date,type:"Bullish cross"});else if(rsiValues[i-1]>=rsiEma[i-1]&&rsiValues[i]<rsiEma[i])history.push({date:rows[i].date,type:"Bearish cross"});}
   document.getElementById("signalHistory").innerHTML=history.length?`<strong>Recent historical crossovers</strong><br>${history.slice(-12).reverse().map(x=>`${esc(x.date)} — ${esc(x.type)}`).join("<br>")}`:"No RSI/EMA crossovers found in eligible history.";
   document.getElementById("rsiCaption").textContent=`Latest RSI ${fmt(rv)} · RSI EMA(9) ${fmt(rsiSig)} · 30 / 50 / 70 reference levels · ${history.length} historical crossovers`;
-  const tf=[{label:"Daily",a:daily,provisional:false,count:rows.length},{label:"Weekly",a:weekly.state,provisional:weekly.provisional,count:weekly.bars.length},{label:"Monthly",a:monthly.state,provisional:monthly.provisional,count:monthly.bars.length}];
-  const available=tf.filter(x=>x.a.above50!==null),bull=available.filter(x=>x.a.above50).length,bear=available.length-bull;
-  const alignment=available.length<2?"Insufficient timeframe coverage":bull===available.length?`Bullish momentum agreement across ${available.length} available timeframe(s)`:bear===available.length?`Bearish momentum agreement across ${available.length} available timeframe(s)`:"Mixed momentum across timeframes";
-  document.getElementById("timeframeSummary").innerHTML=`<div class="score-row"><span><strong>Alignment</strong></span><b>${esc(alignment)}</b></div>`+tf.map(x=>`<div class="score-row"><span><strong>${x.label}</strong><br><small>${x.count} ${x.label.toLowerCase()} bars${x.provisional?" · latest period provisional":""}</small></span><b>${esc(x.a.cross||"Insufficient")}<br><small>RSI ${fmt(x.a.rsi)} · ${x.a.above50===null?"50-level unavailable":x.a.above50?"Above 50":"Below 50"}</small></b></div>`).join("");
+  const tf=[{label:"Daily",a:daily,provisional:false,count:rows.length,history:history.slice(-5).reverse()},{label:"Weekly",a:weekly.state,provisional:weekly.provisional,count:weekly.bars.length,history:weekly.history.slice(-5).reverse()},{label:"Monthly",a:monthly.state,provisional:monthly.provisional,count:monthly.bars.length,history:monthly.history.slice(-5).reverse()}];
+  const rsiAvailable=tf.filter(x=>x.a.above50!==null),rsiAbove=rsiAvailable.filter(x=>x.a.above50).length,rsiBelow=rsiAvailable.length-rsiAbove;
+  const rsiAlignment=rsiAvailable.length<2?"Insufficient RSI-50 coverage":rsiAbove===rsiAvailable.length?`RSI above 50 in ${rsiAvailable.length} available timeframe(s)`:rsiBelow===rsiAvailable.length?`RSI below 50 in ${rsiAvailable.length} available timeframe(s)`:"Mixed RSI-50 readings";
+  // Full momentum agreement requires BOTH RSI>50 and RSI>EMA (or both bearish),
+  // and excludes an unfinished weekly/monthly candle from confirmation.
+  const completed=tf.filter(x=>!x.provisional&&x.a.above50!==null&&x.a.aboveSignal!==null);
+  const fullBull=completed.filter(x=>x.a.above50&&x.a.aboveSignal).length,fullBear=completed.filter(x=>!x.a.above50&&!x.a.aboveSignal).length;
+  const fullAlignment=completed.length<2?"Full momentum alignment unavailable: fewer than two completed timeframes":fullBull===completed.length?`Bullish momentum (RSI above 50 and EMA) across ${completed.length} completed timeframe(s)`:fullBear===completed.length?`Bearish momentum (RSI below 50 and EMA) across ${completed.length} completed timeframe(s)`:"Mixed momentum: RSI-50 and RSI/EMA conditions do not fully agree";
+  document.getElementById("timeframeSummary").innerHTML=`<div class="score-row"><span><strong>RSI 50-level context</strong></span><b>${esc(rsiAlignment)}</b></div><div class="score-row"><span><strong>Full momentum alignment</strong><br><small>Requires RSI/EMA agreement; provisional periods excluded</small></span><b>${esc(fullAlignment)}</b></div>`+tf.map(x=>`<div class="score-row tf-detail"><span><strong>${x.label}</strong><br><small>${x.count} ${x.label.toLowerCase()} bars${x.provisional?" · latest period provisional":" · latest period complete"}</small></span><b>RSI ${fmt(x.a.rsi)} · EMA(9) ${fmt(x.a.signal)}<br><small>RSI vs EMA: ${x.a.aboveSignal===null?"Unavailable":x.a.aboveSignal?"Above":"Below"} · RSI vs 50: ${x.a.above50===null?"Unavailable":x.a.above50?"Above":"Below"}</small><br><small>Latest crossover: ${esc(x.a.cross||"Insufficient")}</small>${x.history.length?`<br><small>Recent crosses: ${x.history.map(h=>`${esc(h.date)} ${esc(h.type)}`).join("; ")}</small>`:"<br><small>Historical crosses: none available</small>"}</b></div>`).join("");
 }
 function drawRsiChart(rows,rs,es){
   const c=document.getElementById("rsiChart"),ctx=c.getContext("2d"),w=c.width=Math.max(320,c.clientWidth)*devicePixelRatio,h=c.height=220*devicePixelRatio,pad=22*devicePixelRatio;

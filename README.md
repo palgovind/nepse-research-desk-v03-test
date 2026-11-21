@@ -109,3 +109,14 @@ node --test tests/technical-engine.test.cjs
 - The service-worker cache namespace is `nepse-research-desk-v03-test-`; activation only removes older caches within that namespace. It does not delete the v0.2 app cache or other apps' caches on the shared `github.io` origin.
 - No automatic copy from v0.2 is performed. Import a JSON backup into the test app only after confirming this isolated build is deployed.
 - The test app and production app still share the browser's origin, so the key and cache namespace separation are essential. Do not use browser-wide site-data clearing during testing.
+
+
+Cache isolation note: fetch handling reads cached assets only from this build's CACHE, preventing older same-origin app-shell caches from supplying stale app.js. Older non-prefixed caches are left untouched.
+
+
+## Multi-timeframe RSI validation update (Phase 2C)
+
+- Daily, weekly and monthly panels display RSI(14), EMA(9) of RSI, RSI-versus-EMA state, RSI-versus-50 state, latest crossover and recent historical crossovers when sufficient history exists.
+- The summary separates RSI-50 context from full momentum alignment. Full alignment requires RSI and EMA conditions to agree and excludes provisional weekly/monthly periods.
+- Monthly indicators remain unavailable until enough monthly bars exist; the interface does not fabricate values.
+- The service-worker cache version is incremented so GitHub Pages clients can receive this update. The v0.3 storage key and restored local data are unchanged.

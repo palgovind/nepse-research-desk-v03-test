@@ -1,4 +1,4 @@
-const CACHE="nepse-research-desk-v03-test-phase2b";
+const CACHE="nepse-research-desk-v03-test-phase2c";
 const CACHE_PREFIX="nepse-research-desk-v03-test-";
 const ASSETS=["./","./index.html","./styles.css","./app.js","./manifest.webmanifest","./sample-template.csv","./icons/icon.svg"];
 self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
