@@ -131,14 +131,15 @@ function timeframeAnalysis(rows,period){
       const end=new Date(Date.UTC(dt.getUTCFullYear(),dt.getUTCMonth()+1,0));provisional=end.toISOString().slice(0,10)>today;
     }
   }
-  if(first<0)return {bars,rs,es:Array(bars.length).fill(null),state:{cross:null,aboveSignal:null,above50:null,combined:null,rsi:null,signal:null},history:[],provisional,period};
+  if(first<0)return {bars,rs,es:Array(bars.length).fill(null),state:{cross:null,aboveSignal:null,above50:null,combined:null,rsi:null,signal:null},history:[],eligibleComparisons:0,provisional,period};
   const validRsi=rs.slice(first),validEma=emaSeries(validRsi,9),aligned=Array(first).fill(null).concat(validEma);
-  const st=signalState(rs,aligned),history=[];
+  const st=signalState(rs,aligned),history=[];let eligibleComparisons=0;
   for(let i=1;i<rs.length;i++)if(rs[i-1]!=null&&aligned[i-1]!=null&&rs[i]!=null&&aligned[i]!=null){
+    eligibleComparisons++;
     if(rs[i-1]<=aligned[i-1]&&rs[i]>aligned[i])history.push({date:bars[i].date,type:'Bullish cross'});
     else if(rs[i-1]>=aligned[i-1]&&rs[i]<aligned[i])history.push({date:bars[i].date,type:'Bearish cross'});
   }
-  return {bars,rs,es:aligned,state:st,history,provisional,period};
+  return {bars,rs,es:aligned,state:st,history,eligibleComparisons,provisional,period};
 }
 function macd(values){const e12=ema(values,12),e26=ema(values,26);return e12===null||e26===null?null:e12-e26;}
 function renderResearch(){
@@ -169,10 +170,11 @@ function renderResearch(){
   ${futureRows.length?`<p class="muted small">Warning: ${futureRows.length} future-dated row(s) excluded; latest excluded date ${futureRows.at(-1).date}. Verify before importing or using them.</p>`:""}
   <p class="muted small">RSI uses Wilder smoothing; RSI signal uses EMA(9) of RSI. A crossover is reported only when the latest eligible observation crosses the signal line relative to the previous observation.</p>`;
   drawRsiChart(rows,rsiValues,rsiEma);
-  const history=[];for(let i=1;i<rsiValues.length;i++)if(rsiValues[i-1]!=null&&rsiEma[i-1]!=null&&rsiValues[i]!=null&&rsiEma[i]!=null){if(rsiValues[i-1]<=rsiEma[i-1]&&rsiValues[i]>rsiEma[i])history.push({date:rows[i].date,type:"Bullish cross"});else if(rsiValues[i-1]>=rsiEma[i-1]&&rsiValues[i]<rsiEma[i])history.push({date:rows[i].date,type:"Bearish cross"});}
-  document.getElementById("signalHistory").innerHTML=history.length?`<strong>Recent historical crossovers</strong><br>${history.slice(-12).reverse().map(x=>`${esc(x.date)} — ${esc(x.type)}`).join("<br>")}`:"No RSI/EMA crossovers found in eligible history.";
-  document.getElementById("rsiCaption").textContent=`Latest RSI ${fmt(rv)} · RSI EMA(9) ${fmt(rsiSig)} · 30 / 50 / 70 reference levels · ${history.length} historical crossovers`;
-  const tf=[{label:"Daily",a:daily,provisional:false,count:rows.length,history:history.slice(-5).reverse()},{label:"Weekly",a:weekly.state,provisional:weekly.provisional,count:weekly.bars.length,history:weekly.history.slice(-5).reverse()},{label:"Monthly",a:monthly.state,provisional:monthly.provisional,count:monthly.bars.length,history:monthly.history.slice(-5).reverse()}];
+  const history=[];let dailyEligibleComparisons=0;for(let i=1;i<rsiValues.length;i++)if(rsiValues[i-1]!=null&&rsiEma[i-1]!=null&&rsiValues[i]!=null&&rsiEma[i]!=null){dailyEligibleComparisons++;if(rsiValues[i-1]<=rsiEma[i-1]&&rsiValues[i]>rsiEma[i])history.push({date:rows[i].date,type:"Bullish cross"});else if(rsiValues[i-1]>=rsiEma[i-1]&&rsiValues[i]<rsiEma[i])history.push({date:rows[i].date,type:"Bearish cross"});}
+  const dailyHistoryStatus=dailyEligibleComparisons<1?"Insufficient eligible comparisons to evaluate crossovers":history.length?`${history.length} crossover(s) detected`:`No crossover detected in ${dailyEligibleComparisons} eligible comparison(s)`;
+  document.getElementById("signalHistory").innerHTML=`<strong>Daily historical crossovers: ${history.length}</strong><br><small>${dailyHistoryStatus}</small>`+(history.length?`<br>${history.slice(-12).reverse().map(x=>`${esc(x.date)} — ${esc(x.type)}`).join("<br>")}`:"");
+  document.getElementById("rsiCaption").textContent=`Latest RSI ${fmt(rv)} · RSI EMA(9) ${fmt(rsiSig)} · 30 / 50 / 70 reference levels · ${history.length} total crossovers`; 
+  const tf=[{label:"Daily",a:daily,provisional:false,count:rows.length,history:history.slice(-5).reverse(),total:history.length,comparisons:dailyEligibleComparisons},{label:"Weekly",a:weekly.state,provisional:weekly.provisional,count:weekly.bars.length,history:weekly.history.slice(-5).reverse(),total:weekly.history.length,comparisons:weekly.eligibleComparisons},{label:"Monthly",a:monthly.state,provisional:monthly.provisional,count:monthly.bars.length,history:monthly.history.slice(-5).reverse(),total:monthly.history.length,comparisons:monthly.eligibleComparisons}];
   const rsiAvailable=tf.filter(x=>x.a.above50!==null),rsiAbove=rsiAvailable.filter(x=>x.a.above50).length,rsiBelow=rsiAvailable.length-rsiAbove;
   const rsiAlignment=rsiAvailable.length<2?"Insufficient RSI-50 coverage":rsiAbove===rsiAvailable.length?`RSI above 50 in ${rsiAvailable.length} available timeframe(s)`:rsiBelow===rsiAvailable.length?`RSI below 50 in ${rsiAvailable.length} available timeframe(s)`:"Mixed RSI-50 readings";
   // Full momentum agreement requires BOTH RSI>50 and RSI>EMA (or both bearish),
@@ -180,7 +182,7 @@ function renderResearch(){
   const completed=tf.filter(x=>!x.provisional&&x.a.above50!==null&&x.a.aboveSignal!==null);
   const fullBull=completed.filter(x=>x.a.above50&&x.a.aboveSignal).length,fullBear=completed.filter(x=>!x.a.above50&&!x.a.aboveSignal).length;
   const fullAlignment=completed.length<2?"Full momentum alignment unavailable: fewer than two completed timeframes":fullBull===completed.length?`Bullish momentum (RSI above 50 and EMA) across ${completed.length} completed timeframe(s)`:fullBear===completed.length?`Bearish momentum (RSI below 50 and EMA) across ${completed.length} completed timeframe(s)`:"Mixed momentum: RSI-50 and RSI/EMA conditions do not fully agree";
-  document.getElementById("timeframeSummary").innerHTML=`<div class="score-row"><span><strong>RSI 50-level context</strong></span><b>${esc(rsiAlignment)}</b></div><div class="score-row"><span><strong>Full momentum alignment</strong><br><small>Requires RSI/EMA agreement; provisional periods excluded</small></span><b>${esc(fullAlignment)}</b></div>`+tf.map(x=>`<div class="score-row tf-detail"><span><strong>${x.label}</strong><br><small>${x.count} ${x.label.toLowerCase()} bars${x.provisional?" · latest period provisional":" · latest period complete"}</small></span><b>RSI ${fmt(x.a.rsi)} · EMA(9) ${fmt(x.a.signal)}<br><small>RSI vs EMA: ${x.a.aboveSignal===null?"Unavailable":x.a.aboveSignal?"Above":"Below"} · RSI vs 50: ${x.a.above50===null?"Unavailable":x.a.above50?"Above":"Below"}</small><br><small>Latest crossover: ${esc(x.a.cross||"Insufficient")}</small>${x.history.length?`<br><small>Recent crosses: ${x.history.map(h=>`${esc(h.date)} ${esc(h.type)}`).join("; ")}</small>`:"<br><small>Historical crosses: none available</small>"}</b></div>`).join("");
+  document.getElementById("timeframeSummary").innerHTML=`<div class="score-row"><span><strong>RSI 50-level context</strong></span><b>${esc(rsiAlignment)}</b></div><div class="score-row"><span><strong>Full momentum alignment</strong><br><small>Requires RSI/EMA agreement; provisional periods excluded</small></span><b>${esc(fullAlignment)}</b></div>`+tf.map(x=>`<div class="score-row tf-detail"><span><strong>${x.label}</strong><br><small>${x.count} ${x.label.toLowerCase()} bars${x.provisional?" · latest period provisional":" · latest period complete"}</small></span><b>RSI ${fmt(x.a.rsi)} · EMA(9) ${fmt(x.a.signal)}<br><small>RSI vs EMA: ${x.a.aboveSignal===null?"Unavailable":x.a.aboveSignal?"Above":"Below"} · RSI vs 50: ${x.a.above50===null?"Unavailable":x.a.above50?"Above":"Below"}</small><br><small>Latest crossover: ${esc(x.a.cross||"Insufficient")}</small><br><small>Historical crossovers: ${x.total} total</small><br><small>${x.comparisons<1?"Insufficient eligible history to evaluate crossovers":x.total?`${x.total} detected in ${x.comparisons} eligible comparison(s)`:`No crossover detected in ${x.comparisons} eligible comparison(s)`}</small>${x.history.length?`<br><small>Recent crosses: ${x.history.map(h=>`${esc(h.date)} ${esc(h.type)}`).join("; ")}</small>`:""}</b></div>`).join("");
 }
 function drawRsiChart(rows,rs,es){
   const c=document.getElementById("rsiChart"),ctx=c.getContext("2d"),w=c.width=Math.max(320,c.clientWidth)*devicePixelRatio,h=c.height=220*devicePixelRatio,pad=22*devicePixelRatio;
