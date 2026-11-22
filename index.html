@@ -69,6 +69,8 @@
       <p class="muted small">Weekly and monthly bars are aggregated from imported daily OHLCV. The latest calendar period may be provisional until that period has ended.</p>
       <div id="timeframeSummary"></div>
     </div>
+    <div class="card" id="supportResistancePanel"><h3>Support & resistance zones</h3><p class="muted">Import eligible daily OHLCV history to calculate zones.</p></div>
+    <div class="card"><h3>Support & resistance scanner</h3><p id="srScannerStatus" class="muted small">Scanner evaluates the watchlist and all symbols with imported history.</p><div id="srScanner"></div></div>
     <div class="card"><h3>Price history</h3><canvas id="priceChart" height="190" aria-label="Closing price chart"></canvas><p id="chartCaption" class="muted small">No history available.</p></div>
   </section>
 
@@ -136,7 +138,7 @@
     <h2>Data & settings</h2>
     <div class="card">
       <h3>Import daily OHLCV CSV</h3>
-      <p class="muted">Use data you have permission to download or store. Expected columns: <code>date,symbol,open,high,low,close,volume,source</code>. Dates should be YYYY-MM-DD.</p>
+      <p class="muted">Use data you have permission to download or store. Expected columns: <code>date,symbol,open,high,low,close,volume,source</code>. Dates should be YYYY-MM-DD. Any valid alphanumeric symbol is accepted; importing it does not add it to your watchlist or portfolio.</p>
       <input id="csvFile" type="file" accept=".csv,text/csv">
       <button id="importBtn">Import CSV</button>
       <p id="importStatus" class="status" role="status">No file selected.</p>
@@ -166,7 +168,7 @@
     </div>
   </section>
 </main>
-<footer>NEPSE Research Desk · v0.3-dev (technical analysis phase 2) · Personal research only</footer>
+<footer>NEPSE Research Desk · v0.3-dev (Phase 3A support/resistance) · Personal research only</footer>
 <script src="app.js"></script>
 </body>
 </html>

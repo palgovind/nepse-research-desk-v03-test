@@ -120,3 +120,17 @@ Cache isolation note: fetch handling reads cached assets only from this build's 
 - The summary separates RSI-50 context from full momentum alignment. Full alignment requires RSI and EMA conditions to agree and excludes provisional weekly/monthly periods.
 - Monthly indicators remain unavailable until enough monthly bars exist; the interface does not fabricate values.
 - The service-worker cache version is incremented so GitHub Pages clients can receive this update. The v0.3 storage key and restored local data are unchanged.
+
+
+## Phase 3A (initial support/resistance engine)
+
+- CSV imports accept valid alphanumeric symbols outside the watchlist. Imported symbols become part of the historical-data universe only; they are not automatically added to the watchlist or portfolio.
+- Research symbol selection includes watchlist symbols plus symbols found in imported OHLCV records. Portfolio transaction selectors remain limited to the watchlist.
+- Support/resistance pivots use a 3-left / 3-right confirmed swing definition. A pivot is only emitted after its three right-side bars exist.
+- Pivots are clustered by type using a fixed-anchor tolerance of 0.5 × the pivot's ATR(14), avoiding chain-linking into excessively wide zones.
+- Zone strength is preliminary: 3+ pivot reactions = strong, 2 = moderate, 1 = weak. Breakout/retest assessment is intentionally not implemented in this initial package; zones are labelled unassessed.
+- Calculations exclude future-dated rows and require at least 30 eligible daily bars; the research trend screen retains its existing 50-bar threshold.
+- The scanner lists all symbols with imported history and separately reports symbols with insufficient history.
+- No portfolio, MWAC, transaction, or v0.2 production logic is intentionally changed.
+
+Phase 3A initial automated tests cover pivot confirmation, fixed-anchor clustering, insufficient history, future-row exclusion, CSV import of non-watchlist symbols, and existing Phase 2 technical/storage behavior.

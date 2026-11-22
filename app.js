@@ -48,8 +48,9 @@ function render(){
     list.appendChild(el);
   });
   const sel=document.getElementById("symbolSelect"),old=sel.value;
-  sel.innerHTML=state.watchlist.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
-  if(state.watchlist.includes(old))sel.value=old;
+  const researchSymbols=[...new Set([...state.watchlist,...state.rows.map(r=>r.symbol).filter(Boolean)])].sort();
+  sel.innerHTML=researchSymbols.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
+  if(researchSymbols.includes(old))sel.value=old;
   ["txSymbol","openSymbol"].forEach(id=>{
     const el=document.getElementById(id),prev=el.value;
     el.innerHTML=state.watchlist.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join("");
@@ -141,6 +142,50 @@ function timeframeAnalysis(rows,period){
   }
   return {bars,rs,es:aligned,state:st,history,eligibleComparisons,provisional,period};
 }
+// Confirmed pivot detection: the right-side bars must already exist in the supplied series.
+function detectPivots(rows,left=3,right=3,atrValues=null){
+  const pivots=[];if(!Array.isArray(rows)||rows.length<left+right+1)return pivots;
+  for(let i=left;i<rows.length-right;i++){
+    const high=Number(rows[i].high),low=Number(rows[i].low);let isHigh=true,isLow=true;
+    for(let j=i-left;j<=i+right;j++){if(j===i)continue;const h=Number(rows[j].high),l=Number(rows[j].low);if(!(high>h))isHigh=false;if(!(low<l))isLow=false;}
+    const atr=atrValues?.[i];
+    if(isHigh)pivots.push({index:i,date:rows[i].date,price:high,type:"resistance",atr:Number.isFinite(atr)&&atr>0?atr:null,confirmedOn:rows[i+right].date});
+    if(isLow)pivots.push({index:i,date:rows[i].date,price:low,type:"support",atr:Number.isFinite(atr)&&atr>0?atr:null,confirmedOn:rows[i+right].date});
+  }
+  return pivots.sort((a,b)=>a.index-b.index||a.type.localeCompare(b.type));
+}
+// Fixed-anchor clustering avoids chain-linking distant pivots into one oversized zone.
+function clusterPivots(pivots,options={}){
+  const toleranceMultiplier=options.toleranceMultiplier??0.5,minReactions=options.minReactions??3;
+  const groups=[];
+  for(const type of ["support","resistance"]){
+    const sorted=pivots.filter(p=>p.type===type).slice().sort((a,b)=>a.price-b.price);
+    for(const pivot of sorted){
+      const tol=Math.max(0.01,(pivot.atr||0)*toleranceMultiplier);
+      let group=groups.find(g=>g.type===type&&Math.abs(pivot.price-g.anchor)<=Math.min(tol,g.tolerance));
+      if(!group){group={type,anchor:pivot.price,tolerance:tol,pivots:[]};groups.push(group);}
+      group.pivots.push(pivot);
+    }
+  }
+  return groups.map((g,i)=>{
+    const prices=g.pivots.map(p=>p.price).sort((a,b)=>a-b),lower=prices[0],upper=prices.at(-1);
+    const representative=prices.reduce((a,b)=>a+b,0)/prices.length;
+    const latest=g.pivots.reduce((a,b)=>a.date>b.date?a:b);
+    const reactionCount=g.pivots.length;
+    return {id:`${g.type}-${i}-${latest.date}`,type:g.type,lowerPrice:lower,upperPrice:upper,representativePrice:representative,reactionCount,strength:reactionCount>=minReactions?"strong":reactionCount===2?"moderate":"weak",lastReactionDate:latest.date,pivotDates:g.pivots.map(p=>p.date),pivots:g.pivots.slice(),status:"unassessed"};
+  }).sort((a,b)=>a.representativePrice-b.representativePrice);
+}
+function supportResistanceAnalysis(rows,options={}){
+  const lookback=options.lookback??120,left=options.leftBars??3,right=options.rightBars??3;
+  const eligible=(rows||[]).filter(r=>r.date<= (options.asOf||isoToday())).slice().sort((a,b)=>a.date.localeCompare(b.date));
+  const selected=eligible.slice(-lookback);
+  if(selected.length<(options.minimumBars??30))return {status:"insufficient",bars:selected.length,required:options.minimumBars??30,pivots:[],zones:[],support:[],resistance:[],atr:null,latestClose:selected.at(-1)?.close??null};
+  const atrs=atrSeries(selected,14),pivots=detectPivots(selected,left,right,atrs),zones=clusterPivots(pivots,options);
+  const latestClose=Number(selected.at(-1).close),latestAtr=atrs.at(-1);
+  const support=zones.filter(z=>z.type==="support"&&z.representativePrice<=latestClose).sort((a,b)=>b.representativePrice-a.representativePrice);
+  const resistance=zones.filter(z=>z.type==="resistance"&&z.representativePrice>=latestClose).sort((a,b)=>a.representativePrice-b.representativePrice);
+  return {status:"ready",bars:selected.length,required:options.minimumBars??30,pivots,zones,support,resistance,atr:latestAtr??null,latestClose,latestDate:selected.at(-1).date,lookback};
+}
 function macd(values){const e12=ema(values,12),e26=ema(values,26);return e12===null||e26===null?null:e12-e26;}
 function renderResearch(){
   const sym=document.getElementById("symbolSelect").value||state.watchlist[0];
@@ -149,7 +194,7 @@ function renderResearch(){
   const rows=allRows.filter(r=>r.date<=today),closes=rows.map(r=>Number(r.close)),volumes=rows.map(r=>Number(r.volume));
   const card=document.getElementById("researchCard");drawChart(closes,sym);
   document.getElementById("chartCaption").textContent=rows.length?`${rows.length} eligible imported observations · latest ${rows.at(-1).date} · not a live quote`:"No eligible history available.";
-  if(rows.length<50){const rc=document.getElementById("rsiChart");rc.getContext("2d").clearRect(0,0,rc.width,rc.height);card.innerHTML=`<strong>${esc(sym)}</strong><p class="muted">Only ${rows.length} non-future observations are eligible. At least 50 daily closing prices are required for this initial trend screen; 200+ are preferable for long-term analysis.</p>${futureRows.length?`<p class="muted">${futureRows.length} future-dated rows excluded (latest ${futureRows.at(-1).date}). Verify their source/date before use.</p>`:""}`;document.getElementById("timeframeSummary").innerHTML="Insufficient data.";document.getElementById("rsiCaption").textContent="At least 23 daily closes are needed for RSI(14) plus its EMA(9) signal line.";document.getElementById("signalHistory").textContent="No signal history.";return;}
+  if(rows.length<50){const rc=document.getElementById("rsiChart");rc.getContext("2d").clearRect(0,0,rc.width,rc.height);card.innerHTML=`<strong>${esc(sym)}</strong><p class="muted">Only ${rows.length} non-future observations are eligible. At least 50 daily closing prices are required for this initial trend screen; 200+ are preferable for long-term analysis.</p>${futureRows.length?`<p class="muted">${futureRows.length} future-dated rows excluded (latest ${futureRows.at(-1).date}). Verify their source/date before use.</p>`:""}`;document.getElementById("timeframeSummary").innerHTML="Insufficient data.";document.getElementById("rsiCaption").textContent="At least 23 daily closes are needed for RSI(14) plus its EMA(9) signal line.";document.getElementById("signalHistory").textContent="No signal history.";renderSupportResistance();return;}
   const e20=ema(closes,20),e50=ema(closes,50),e200=ema(closes,200),rsiValues=rsiSeries(closes,14),rsiEma=(()=>{const first=rsiValues.findIndex(v=>v!==null);return first<0?Array(rows.length).fill(null):Array(first).fill(null).concat(emaSeries(rsiValues.slice(first),9));})();
   const rv=rsiValues.at(-1),rsiSig=rsiEma.at(-1),atr=atrSeries(rows,14).at(-1),m=macd(closes);
   const avgVol=volumes.slice(-21,-1).reduce((a,b)=>a+b,0)/Math.max(1,volumes.slice(-21,-1).length);
@@ -183,6 +228,23 @@ function renderResearch(){
   const fullBull=completed.filter(x=>x.a.above50&&x.a.aboveSignal).length,fullBear=completed.filter(x=>!x.a.above50&&!x.a.aboveSignal).length;
   const fullAlignment=completed.length<2?"Full momentum alignment unavailable: fewer than two completed timeframes":fullBull===completed.length?`Bullish momentum (RSI above 50 and EMA) across ${completed.length} completed timeframe(s)`:fullBear===completed.length?`Bearish momentum (RSI below 50 and EMA) across ${completed.length} completed timeframe(s)`:"Mixed momentum: RSI-50 and RSI/EMA conditions do not fully agree";
   document.getElementById("timeframeSummary").innerHTML=`<div class="score-row"><span><strong>RSI 50-level context</strong></span><b>${esc(rsiAlignment)}</b></div><div class="score-row"><span><strong>Full momentum alignment</strong><br><small>Requires RSI/EMA agreement; provisional periods excluded</small></span><b>${esc(fullAlignment)}</b></div>`+tf.map(x=>`<div class="score-row tf-detail"><span><strong>${x.label}</strong><br><small>${x.count} ${x.label.toLowerCase()} bars${x.provisional?" · latest period provisional":" · latest period complete"}</small></span><b>RSI ${fmt(x.a.rsi)} · EMA(9) ${fmt(x.a.signal)}<br><small>RSI vs EMA: ${x.a.aboveSignal===null?"Unavailable":x.a.aboveSignal?"Above":"Below"} · RSI vs 50: ${x.a.above50===null?"Unavailable":x.a.above50?"Above":"Below"}</small><br><small>Latest crossover: ${esc(x.a.cross||"Insufficient")}</small><br><small>Historical crossovers: ${x.total} total</small><br><small>${x.comparisons<1?"Insufficient eligible history to evaluate crossovers":x.total?`${x.total} detected in ${x.comparisons} eligible comparison(s)`:`No crossover detected in ${x.comparisons} eligible comparison(s)`}</small>${x.history.length?`<br><small>Recent crosses: ${x.history.map(h=>`${esc(h.date)} ${esc(h.type)}`).join("; ")}</small>`:""}</b></div>`).join("");
+  renderSupportResistance();
+}
+function renderSupportResistance(){
+  const host=document.getElementById("supportResistancePanel");if(!host)return;
+  const symbols=[...new Set(state.rows.map(r=>r.symbol))].sort();
+  const results=symbols.map(symbol=>({symbol,result:supportResistanceAnalysis(symbolRows(symbol))}));
+  const current=document.getElementById("symbolSelect").value||state.watchlist[0];
+  const selected=results.find(x=>x.symbol===current)?.result||supportResistanceAnalysis(symbolRows(current));
+  if(selected.status!=="ready"){
+    host.innerHTML=`<h3>Support & resistance zones</h3><p class="muted">Insufficient history for ${esc(current)}: ${selected.bars} eligible daily bars; ${selected.required} required.</p>`;
+  }else{
+    const rows=(items)=>items.slice(0,4).map(z=>`<div class="score-row"><span>${fmt(z.lowerPrice)}–${fmt(z.upperPrice)}<br><small>${z.reactionCount} confirmed pivot reaction(s) · ${esc(z.lastReactionDate)}</small></span><b>${esc(z.strength)}</b></div>`).join("")||'<p class="muted small">No zone identified in this direction.</p>';
+    host.innerHTML=`<h3>Support & resistance zones — ${esc(current)}</h3><p class="muted small">${selected.bars} daily bars · latest ${esc(selected.latestDate)} · close ${fmt(selected.latestClose)} · ATR(14) ${fmt(selected.atr)}. Pivots require 3 later bars for confirmation. Zone status is not yet breakout-assessed.</p><strong>Nearest support zones</strong>${rows(selected.support)}<strong>Nearest resistance zones</strong>${rows(selected.resistance)}`;
+  }
+  const eligible=results.filter(x=>x.result.status==="ready");
+  const scanner=document.getElementById("srScanner");if(scanner)scanner.innerHTML=eligible.length?eligible.map(x=>{const r=x.result,s=r.support[0],res=r.resistance[0];return `<div class="score-row"><span><strong>${esc(x.symbol)}</strong><br><small>${r.bars} bars · ${esc(r.latestDate)}</small></span><b>Support ${s?fmt(s.representativePrice):"—"}<br>Resistance ${res?fmt(res.representativePrice):"—"}</b></div>`;}).join(""):`<p class="muted">No symbols currently meet the minimum history requirement.</p>`;
+  const insufficient=results.filter(x=>x.result.status!=="ready");const status=document.getElementById("srScannerStatus");if(status)status.textContent=`${eligible.length} eligible symbol(s); ${insufficient.length} with insufficient history. Universe includes watchlist and all symbols with imported OHLCV.`;
 }
 function drawRsiChart(rows,rs,es){
   const c=document.getElementById("rsiChart"),ctx=c.getContext("2d"),w=c.width=Math.max(320,c.clientWidth)*devicePixelRatio,h=c.height=220*devicePixelRatio,pad=22*devicePixelRatio;
@@ -210,7 +272,7 @@ function parseCSV(text){
   return lines.filter(Boolean).map((line,i)=>{
     const cols=line.split(","),o={};headers.forEach((h,j)=>o[h]=(cols[j]||"").trim());
     const r={date:o.date,symbol:o.symbol.toUpperCase(),open:Number(o.open),high:Number(o.high),low:Number(o.low),close:Number(o.close),volume:Number(o.volume),source:o.source||"User-imported CSV"};
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date)||!state.watchlist.includes(r.symbol)||![r.open,r.high,r.low,r.close,r.volume].every(Number.isFinite)||r.close<=0||r.volume<0)throw Error(`Invalid row ${i+2}: check date, watchlist symbol and numeric OHLCV values.`);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(r.date)||!/^[A-Z0-9]+$/.test(r.symbol)||![r.open,r.high,r.low,r.close,r.volume].every(Number.isFinite)||r.close<=0||r.volume<0)throw Error(`Invalid row ${i+2}: check date, alphanumeric symbol and numeric OHLCV values.`);
     if(r.high<Math.max(r.open,r.close,r.low)||r.low>Math.min(r.open,r.close,r.high))throw Error(`Invalid high/low on row ${i+2}.`);
     return r;
   });
